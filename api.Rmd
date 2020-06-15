@@ -1,0 +1,146 @@
+---
+title: "Working with APIs"
+author: "Showroop Pokhrel"
+date: "12/2/2018"
+output:
+  html_document: default
+  word_document: default
+---
+
+In this project, I make the use of Functional Programming in R to:
+1. Use the Le Monde API (a leading French newspaper) to search and retrieve specific news articles from the Le Monde database.
+2. Convert relevant articles from French to English by calling the Google Translate API 
+3. Convert the translated files from text to speech using Google Text-to-Speech API
+
+
+## Preliminaries
+You need to have your Gcloud API key before starting. Watch this [video](https://www.youtube.com/watch?v=1JNwpp5L4vM) on getting your API credentials. 
+```{r}
+library(httr, quietly = T)
+library(DescTools, quietly = T)
+
+#Global Constants
+#Le Monde API key
+api_key <- "9f7b1e42e3dc4e8ca0796fe89c431083"
+#GCloud API key
+cloud_api_key <- "AIzaSyBbUbtvJ3BZp7ryicOgIu5EwPkBMtk5Zfc"
+base <-  "https://newsapi.org/v2/"
+```
+
+
+## 1. Retriving most recent articles given a certain keyword
+This function returns a dataframe containing articles published in the the past month in Le Monde and filtered for particular keyword(s). I used the span of a month b/c the API only provides access to articles dating back a month from today's date
+```{r, results="hold"}
+get_last_month_articles_by_keywords <- function(source="le-monde", keywords){
+  date.today <- Sys.Date()
+  last.month <- DescTools::AddMonths(date.today, -1)
+  prefix <- "everything?q="
+  keyword <- paste(keywords, collapse = "&")
+  query <- paste(prefix, keyword,"&from=", last.month, "&sources=",source, sep="")
+  url <- paste(base, query, "&apiKey=", api_key, sep="")
+  x <- httr::GET(url=url) #Get me the info associated with this url
+  x <- jsonlite::fromJSON(rawToChar(x$content))
+  return(x$articles)
+}
+```
+
+Example: Querying for articles that mention "Trump" and "Saudi" together
+```{r, results="hold"}
+df <- get_last_month_articles_by_keywords(source ="le-monde" ,c("trump","saudi"))
+knitr::kable(df[1:5,2:4], caption = "A subset of the dataframe containing articles published in Le Monde that mentioned Trump and Saudi together")
+```
+
+
+
+## 2. Retrieving most recent headlines from Le Monde
+This function returns most recent headlines from Le Monde. The keyword parameter is set as optional. If a keyword is specified, it will filter for most recent headlines containing that particular keyword
+```{r, results="hold"}
+get_headlines <- function(source="le-monde", keyword){
+  prefix <- "top-headlines?"
+  
+  #Making keyword an optional parameter
+  if(missing(keyword)){
+    query <- paste(prefix, "sources=",source, sep="")
+  }
+  else{
+    keyword <- paste(keyword, collapse = "&")
+    query <- paste(prefix, "q=",keyword, "&sources=", source, sep="")
+  }
+
+  url <- paste(base, query,"&apiKey=", api_key, sep="")
+  x <- httr::GET(url=url)
+  x <- jsonlite::fromJSON(rawToChar(x$content))
+  return(x$articles$title)
+} 
+```
+
+Usage:
+```{r, results="hold"}
+headline <- get_headlines()
+headline
+```
+
+
+
+## 3. Translation from French to English
+Given a vector of sentences in French (hence source=="fr"), this function translates it into English (target="en") by calling the Google Translate API
+```{r, results="hold"}
+translate <- function(text, source="fr", target="en", cloud_api_key = "AIzaSyBbUbtvJ3BZp7ryicOgIu5EwPkBMtk5Zfc"){
+  translated <- rep(NA,length(text))
+  base <- "https://translation.googleapis.com/language/translate/v2?key="
+  url <- paste(base, cloud_api_key, sep="")
+  
+  for ( i in 1: length(text)){
+  body <- paste("{",
+                "'q':'", text[i], "',", 
+              "'source':'", source, "',",
+              "'target':'", target, "',",
+              "'format':'text',",  
+              "}", sep="")
+  x <- httr::POST(url, body = body)
+  x <- jsonlite::fromJSON(rawToChar(x$content))
+  translated[i] <- x$data$translations$translatedText
+  }
+  return(translated)
+}
+```
+
+Usage
+```{r, results="hold"}
+headline.eng <- translate(headline)
+headline.eng
+```
+
+
+## 3. Converting French Text to Speech
+Given a text in French, this function internally calls the system and translates it into speech
+```{r, results="hold"}
+text_to_speech <- function(text, cloud_api_key="AIzaSyBbUbtvJ3BZp7ryicOgIu5EwPkBMtk5Zfc"){
+  text <- paste(text, collapse=" ")
+  text <- gsub("'", "", text)
+  input <- paste("'input':{'text':'", text, "'}", sep="")
+  voice <- "'voice':{'languageCode':'fr-FR','name':'fr-FR-Standard-A','ssmlGender':'FEMALE'}"
+  output <- "'audioConfig':{'audioEncoding':'MP3'}"
+
+  s_body <- paste("{", input, ",", voice, ",", output, "}", sep="")
+
+  base_url <- "https://texttospeech.googleapis.com/v1/text:synthesize?key="
+  url <- paste(base_url, cloud_api_key, sep="")
+  x <- httr::POST(url, body = s_body)
+  x <- jsonlite::fromJSON(rawToChar(x$content))
+  
+  Sys.setenv(output_string=x$audioContent)
+  system("echo $output_string > sound_out.txt")
+
+  system("base64 --decode sound_out.txt > sound_out.mp3")
+  system("afplay sound_out.mp3")
+  return(NULL)
+}
+
+#text_to_speech(headline)
+
+```
+
+
+
+
